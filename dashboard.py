@@ -2,144 +2,162 @@ import streamlit as st
 import requests
 import pandas as pd
 from datetime import datetime
+import random
 import time
 
-# --- 配置区域：你需要手动维护的“活动币”列表 ---
-# 格式：'代币代码': '活动结束日期(年-月-日)'
+# --- 页面配置 ---
+st.set_page_config(page_title="Alpha 空投监控台", layout="wide")
+
+# --- 1. 配置区域：你需要手动维护的“活动币”列表 ---
 ACTIVE_CAMPAIGNS = {
     'LISTAUSDT': '2025-12-30',
     'BBUSDT': '2025-06-20',
     'REZUSDT': '2025-05-15',
     'NOTUSDT': '2025-04-01',
-    # 你可以随时在这里添加新的活动币
+    'IOUSDT': '2025-08-01',
+    'ZKUSDT': '2025-07-15'
 }
 
-# --- 核心函数 ---
+# --- 2. 核心功能函数 ---
+
 def get_binance_data():
-    """从币安获取实时数据"""
+    """尝试从币安获取真实数据"""
+    url = "https://api.binance.com/api/v3/ticker/24hr"
     try:
-        url = "https://api.binance.com/api/v3/ticker/24hr"
-        response = requests.get(url, timeout=5)
-        return response.json()
-    except:
-        return []
+        # 设置超时时间，避免卡死
+        response = requests.get(url, timeout=3)
+        data = response.json()
+        
+        # 严格检查数据格式：必须是列表，且里面要有 symbol 字段
+        if isinstance(data, list) and len(data) > 0 and 'symbol' in data[0]:
+            return data, True # True 表示是真实数据
+            
+        # 如果返回的是错误字典（比如被封IP）
+        return None, False
+    except Exception as e:
+        return None, False
+
+def get_mock_data():
+    """生成仿真数据（当真实接口被封时使用）"""
+    mock_list = []
+    for symbol, end_date in ACTIVE_CAMPAIGNS.items():
+        # 随机生成一些逼真的数据
+        base_price = random.uniform(0.1, 5.0)
+        mock_list.append({
+            'symbol': symbol,
+            'lastPrice': str(base_price),
+            'highPrice': str(base_price * 1.01), # 波动很小
+            'lowPrice': str(base_price * 0.99),
+            'quoteVolume': str(random.uniform(5000000, 50000000)), # 500万-5000万U
+            'count': random.randint(5000, 50000) # 活跃人数
+        })
+    return mock_list
 
 def calculate_days_left(end_date_str):
     """计算剩余天数"""
-    end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
-    delta = end_date - datetime.now()
-    return max(delta.days, 0)
+    try:
+        end_date = datetime.strptime(end_date_str, "%Y-%m-%d")
+        delta = end_date - datetime.now()
+        return max(delta.days, 0)
+    except:
+        return 0
 
-# --- 网页页面布局 ---
-st.set_page_config(page_title="Alpha 空投监控台", layout="wide")
+# --- 3. 网页显示逻辑 ---
 
 st.title("🚀 Alpha 空投实时监控大屏")
-st.markdown("### 监控目标：高倍交易量活动代币 | 核心策略：稳如泰山")
 
-# 侧边栏：模拟的新闻推送
+# 侧边栏
 with st.sidebar:
-    st.header("📢 币安最新公告 (模拟)")
+    st.header("📢 状态面板")
     st.info("🔥 [新] Binance Megadrop 即将上线 Lista DAO!")
-    st.success("✅ IO.NET 空投已开放申领")
-    st.warning("⚠️ 距离 BB 活动结束还剩 3 天")
-
-# 1. 获取数据
-data = get_binance_data()
-# 1. 获取数据
-with st.spinner('正在连接币安数据中心...'):
-    data = get_binance_data()
-
-# --- 新增的“安检”代码 ---
-# 情况 A：完全没连上
-if not data:
-    st.error("无法连接币安接口，可能是网络波动。")
-    st.stop()
-
-# 情况 B：币安拒绝了服务（重点是这里！）
-if isinstance(data, dict):
-    # 如果返回的是个字典，说明出错了
-    if 'msg' in data:
-        st.error(f"币安拒绝了请求，原因: {data['msg']}")
-        st.warning("提示：Streamlit 公共云服务器可能被币安限制了。建议：\n1. 稍后再试 \n2. 或者回到本地电脑运行")
-    else:
-        st.error(f"返回数据格式异常: {data}")
-    st.stop()
-
-# 情况 C：数据不是列表
-if not isinstance(data, list):
-    st.error("数据格式严重错误，请联系开发者。")
-    st.stop()
-# -----------------------
-
-# 2. 数据清洗与计算
-# (后面的代码保持不变...)
-# 2. 数据清洗与计算
-target_coins = []
-for item in data:
-    symbol = item['symbol']
     
-    # 只筛选我们在配置区域定义的“活动币”
-    if symbol in ACTIVE_CAMPAIGNS:
-        price = float(item['lastPrice'])
-        high = float(item['highPrice'])
-        low = float(item['lowPrice'])
-        volume = float(item['quoteVolume'])
-        count = int(item['count']) # 交易笔数
-        
-        # 计算波动率 (越低越好)
-        volatility = ((high - low) / price) * 100
-        
-        # 计算剩余天数
-        days_left = calculate_days_left(ACTIVE_CAMPAIGNS[symbol])
-        
-        target_coins.append({
-            '代币': symbol,
-            '当前价格': price,
-            '波动率(%)': round(volatility, 3),
-            '24H成交额(U)': round(volume / 1000000, 2), # 百万单位
-            '活跃人数(笔数)': count,
-            '活动剩余天数': days_left
-        })
+# 获取数据流程
+with st.spinner('正在连接数据中心...'):
+    raw_data, is_real = get_binance_data()
 
-# 转成表格格式
-if target_coins:
-    df = pd.DataFrame(target_coins)
-    
-    # 3. 找出今日参与最多的前三名 (按活跃人数排序)
-    top_3 = df.sort_values(by='活跃人数(笔数)', ascending=False).head(3)
-    
-    # --- 页面第一行：关键指标 ---
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        st.metric("🔥 今日最热项目", top_3.iloc[0]['代币'], f"{top_3.iloc[0]['活跃人数(笔数)']} 笔交易")
-    with c2:
-        st.metric("🥈 第二名", top_3.iloc[1]['代币'], f"{top_3.iloc[1]['活跃人数(笔数)']} 笔交易")
-    with c3:
-        st.metric("🥉 第三名", top_3.iloc[2]['代币'], f"{top_3.iloc[2]['活跃人数(笔数)']} 笔交易")
-    
-    st.divider()
-
-    # --- 页面第二行：详细监控表格 ---
-    st.subheader("📊 4倍交易量活动代币监控表")
-    
-    # 样式高亮：波动率 < 1% 的标绿（适合刷），波动率 > 5% 的标红（危险）
-    def highlight_volatility(val):
-        color = 'green' if val < 1 else 'red' if val > 5 else 'black'
-        return f'color: {color}; font-weight: bold'
-
-    st.dataframe(
-        df.style.applymap(highlight_volatility, subset=['波动率(%)'])
-        .format({"当前价格": "{:.4f}", "24H成交额(U)": "{:.2f} M"}),
-        use_container_width=True,
-        height=400
-    )
-    
-    st.caption("提示：'波动率'越低，刷量磨损越小；'活跃人数'越高，流动性越好。")
-
+# 状态判断与处理
+if is_real:
+    st.success("✅ 已连接币安实时接口 (Real-time)")
+    df_source = raw_data
 else:
-    st.warning("当前没有匹配的活动代币数据，请检查配置列表。")
+    st.warning("⚠️ 警告：当前IP无法连接币安接口（可能被防火墙拦截）。")
+    st.caption("💡 已自动切换至 **[演示模式]**，以下为仿真数据，仅供测试界面功能。")
+    df_source = get_mock_data() # 使用假数据兜底，防止报错
 
-# 自动刷新按钮
+# 数据清洗
+target_coins = []
+for item in df_source:
+    symbol = item.get('symbol', '')
+    
+    # 筛选我们关注的币
+    if symbol in ACTIVE_CAMPAIGNS:
+        try:
+            price = float(item.get('lastPrice', 0))
+            high = float(item.get('highPrice', 0))
+            low = float(item.get('lowPrice', 0))
+            volume = float(item.get('quoteVolume', 0))
+            count = int(item.get('count', 0))
+            
+            # 避免除以零错误
+            if price == 0: continue
+
+            # 计算波动率
+            volatility = ((high - low) / price) * 100
+            days_left = calculate_days_left(ACTIVE_CAMPAIGNS[symbol])
+            
+            target_coins.append({
+                '代币': symbol,
+                '当前价格': price,
+                '波动率(%)': volatility,
+                '24H成交额(U)': volume / 1000000,
+                '活跃人数': count,
+                '剩余天数': days_left
+            })
+        except Exception as e:
+            continue
+
+# 如果没有数据
+if not target_coins:
+    st.error("没有找到匹配的数据。")
+    st.stop()
+
+# 转成表格
+df = pd.DataFrame(target_coins)
+
+# 找出前三名
+top_3 = df.sort_values(by='活跃人数', ascending=False).head(3)
+
+# 界面展示：Top 3 指标卡
+c1, c2, c3 = st.columns(3)
+if len(top_3) >= 3:
+    with c1:
+        st.metric("🔥 活跃榜首", top_3.iloc[0]['代币'], f"{top_3.iloc[0]['活跃人数']} 笔")
+    with c2:
+        st.metric("🥈 第二名", top_3.iloc[1]['代币'], f"{top_3.iloc[1]['活跃人数']} 笔")
+    with c3:
+        st.metric("🥉 第三名", top_3.iloc[2]['代币'], f"{top_3.iloc[2]['活跃人数']} 笔")
+
+st.divider()
+
+# 界面展示：主表格
+st.subheader("📊 4倍交易量活动代币监控表")
+
+# 颜色函数
+def highlight_volatility(val):
+    if val < 1.0: return 'background-color: #d4edda; color: green; font-weight: bold' # 绿色背景
+    if val > 5.0: return 'background-color: #f8d7da; color: red' # 红色背景
+    return ''
+
+# 显示表格
+st.dataframe(
+    df.style.applymap(highlight_volatility, subset=['波动率(%)'])
+    .format({"当前价格": "{:.4f}", "波动率(%)": "{:.2f}%", "24H成交额(U)": "{:.2f} M"}),
+    use_container_width=True,
+    height=400
+)
+
+st.caption("提示：演示模式下数据为随机生成。如需真实数据，请在本地电脑运行。")
+
+# 刷新按钮
 if st.button('🔄 刷新数据'):
-
     st.rerun()
